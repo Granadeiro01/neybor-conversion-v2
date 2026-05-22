@@ -1,0 +1,59 @@
+[project]
+name = "neybor-conversion"
+version = "0.1.0"
+description = "Tenant application conversion prediction with explainable AI"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    # Data
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "pyarrow>=15.0",          # for Parquet writes
+    "pandera>=0.20",          # schema validation
+    # Modeling
+    "scikit-learn>=1.5",
+    "xgboost>=2.0",
+    "lightgbm>=4.3",
+    "imbalanced-learn>=0.12", # SMOTE comparison
+    # Explainability
+    "shap>=0.45",
+    # Stats / calibration
+    "statsmodels>=0.14",
+    "scipy>=1.13",
+    # Plotting
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    # Utilities
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "joblib>=1.4",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "jupyter>=1.0",
+    "ipykernel>=6.29",
+    "nbconvert>=7.16",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"

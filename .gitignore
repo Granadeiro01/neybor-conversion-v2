@@ -1,0 +1,62 @@
+# Data — never commit raw or processed data
+data/raw/
+data/interim/
+data/processed/
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+
+# Model artifacts
+models/
+*.joblib
+*.pkl
+
+# Reports — generated outputs
+reports/figures/*.png
+reports/figures/*.pdf
+reports/tables/*.csv
+!reports/figures/.gitkeep
+!reports/tables/.gitkeep
+
+# Secrets
+.env
+.env.local
+*.pem
+credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing
+.pytest_cache/
+pytest-cache-files-*/
+.coverage
+htmlcov/
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# OS
+Thumbs.db
