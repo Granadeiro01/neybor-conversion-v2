@@ -88,16 +88,27 @@ EXCLUDE_REJECTION_REASON: str = "Testing"
 # ---------------------------------------------------------------------------
 # Temporal split (thesis Section 5.1.3)
 # ---------------------------------------------------------------------------
-# Train: June 2025 - January 2026 (8 months)
-# Test:  February - April 2026 (3 months)
-TRAIN_END_DATE: str = "2026-01-31"
-TEST_START_DATE: str = "2026-02-01"
+# Train: June - December 2025 (7 months); Test: January - April 2026 (4 months).
+# The cut was moved earlier (from 2026-01-31) to a ~73/27 train/test ratio so the
+# hold-out is large enough to characterise the post-Neybor-Tech capture regime and
+# to narrow the train/test class-balance gap (thesis Section 5.1.3). A continuous
+# `submission_time_index` feature is added to absorb residual structural drift.
+TRAIN_END_DATE: str = "2025-12-31"
+TEST_START_DATE: str = "2026-01-01"
 
 # ---------------------------------------------------------------------------
 # Cross-validation (thesis Section 5.1.1)
 # ---------------------------------------------------------------------------
 CV_K_FOLDS: int = 5
 CV_N_REPEATS: int = 10
+
+# Model-selection tie-break (thesis Section 5.2). Families whose mean validation
+# PR-AUC is within SELECTION_TIE_EPSILON of the best are treated as a statistical
+# tie on this small sample; the tie is then broken by MODEL_PREFERENCE, which
+# favours interpretability and low operating cost. This prevents a sub-noise
+# PR-AUC difference from flipping the deployed model.
+SELECTION_TIE_EPSILON: float = 0.02
+MODEL_PREFERENCE: tuple[str, ...] = ("logreg", "decision_tree", "random_forest", "xgboost")
 
 # ---------------------------------------------------------------------------
 # Bootstrap CI (thesis Section 5.1.1)

@@ -35,7 +35,7 @@ JOIN_KEY_RIGHT = "salesforce_application_id"
 HEADLINE_FEATURES: tuple[str, ...] = (
     "dshift__Source__c",
     "Gender__c",
-    "Nationality__c",
+    "nationality_region",            # was Nationality__c (coarse Euro/Non-Euro/Unknown)
     "Professional_Situation__c",
     "Working_for__c",
     "Monthly_Budget",
@@ -49,7 +49,8 @@ HEADLINE_FEATURES: tuple[str, ...] = (
     "lead_time_days",
     "submission_day_of_week",
     "submission_month",
-    "tenant_age_at_application_created",
+    "submission_time_index",         # continuous drift control (regime-shift)
+    "age_band",                      # was tenant_age_at_application_created (binned)
     "demand_pressure",
     "budget_unit_mismatch",
 )

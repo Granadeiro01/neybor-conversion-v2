@@ -106,16 +106,25 @@ class TestDropMissingCreatedDate:
 
 class TestHeadlineFeatures:
     def test_count_matches_headline_summary(self):
-        # The headline run's JSON summary records exactly 19 features.
-        assert len(HEADLINE_FEATURES) == 19
+        # The current run uses 20 model features: the solvency-era set with raw
+        # Nationality and absolute age replaced by coarse nationality_region and
+        # age_band, plus the submission_time_index drift control.
+        assert len(HEADLINE_FEATURES) == 20
 
     def test_includes_solvency_added_features(self):
         for col in (
             "Monthly_Budget",
             "length_of_stay",
-            "tenant_age_at_application_created",
         ):
             assert col in HEADLINE_FEATURES
+
+    def test_uses_coarse_demographic_and_drift_features(self):
+        # Raw Nationality / absolute age are replaced by coarse encodings, and a
+        # continuous time index controls for the capture-regime shift.
+        for col in ("nationality_region", "age_band", "submission_time_index"):
+            assert col in HEADLINE_FEATURES
+        for col in ("Nationality__c", "tenant_age_at_application_created"):
+            assert col not in HEADLINE_FEATURES
 
     def test_excludes_post_join_metadata(self):
         for col in (

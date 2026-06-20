@@ -39,8 +39,8 @@ class TestTemporalSplit:
 
     def test_train_dates_before_cutoff(self):
         df = _make_df(400)
-        train, _ = temporal_split(df, train_end="2026-01-31")
-        assert (train["CreatedDate"] < pd.Timestamp("2026-02-01", tz="UTC")).all()
+        train, _ = temporal_split(df, train_end="2025-12-31", test_start="2026-01-01")
+        assert (train["CreatedDate"] < pd.Timestamp("2026-01-01", tz="UTC")).all()
 
     def test_test_dates_after_cutoff(self):
         df = _make_df(400)

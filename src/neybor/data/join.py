@@ -14,28 +14,62 @@ contain future prices or availability relative to older applications.
 from __future__ import annotations
 
 import logging
+import re
 
 import numpy as np
 import pandas as pd
 
 log = logging.getLogger(__name__)
 
+# Map the tier token parsed from a unit's Name (e.g. "Amb46 - 01Pocket") to the
+# canonical unit-type label used on applications (dshift__MER_Unit_Type__c).
+_TIER_NAME_MAP = {
+    "pocket": "Pocket", "standard+": "Standard+", "standardplus": "Standard+",
+    "standard": "Standard", "suite": "Suite", "studio": "Studio",
+    "apartment": "Apartment",
+}
+
+
+def _parse_unit_tier(name: object) -> str | None:
+    """Extract the room tier from a unit Name suffix (after the unit number)."""
+    m = re.search(r"\d+\s*([A-Za-z+]+)\s*$", str(name))
+    if not m:
+        return None
+    return _TIER_NAME_MAP.get(m.group(1).strip().lower())
+
+
+def unit_type_reference_price(units: pd.DataFrame) -> pd.DataFrame:
+    """Median current unit price per room tier, parsed from unit Names.
+
+    Units carry no property/group foreign key and a single MER_Type ("Residential"),
+    so a per-group reference price is not recoverable from this export. The tier,
+    however, is encoded in the unit Name suffix and matches the application's
+    dshift__MER_Unit_Type__c, which gives a usable per-tier reference. Zero-priced
+    units (data-quality artefacts) are excluded from the median. The current
+    snapshot is used as the reference; tier prices are assumed roughly stable over
+    the observation window, a mild as-of-time assumption documented in the thesis.
+    """
+    u = units.copy()
+    u["__tier"] = u["Name"].apply(_parse_unit_tier)
+    price = pd.to_numeric(u["dshift__MER_Current_Unit_Price__c"], errors="coerce").replace(0, np.nan)
+    u = u.assign(__price=price).dropna(subset=["__tier", "__price"])
+    ref = (u.groupby("__tier")["__price"].median()
+             .rename("unit_type_median_price").reset_index()
+             .rename(columns={"__tier": "dshift__MER_Unit_Type__c"}))
+    return ref
+
 
 def join_enrichment(
     applications: pd.DataFrame,
     properties: pd.DataFrame,
     units: pd.DataFrame,
-    *,
-    include_inventory_aggregates: bool = False,
 ) -> pd.DataFrame:
-    """Left-join leakage-safe property enrichment onto cleaned applications.
+    """Left-join leakage-safe enrichment onto cleaned applications.
 
-    Parameters
-    ----------
-    include_inventory_aggregates:
-        Off by default. Turning this on assumes the unit snapshot represents
-        inventory available at every application creation time, which is usually
-        too strong for a historical conversion model.
+    Adds stable property descriptors (city, country, postal code, type) for the
+    ~15% of applications that pre-selected a building, plus a per-tier reference
+    price (``unit_type_median_price``) parsed from unit Names and joined on the
+    applicant's chosen unit type, which powers ``budget_unit_mismatch``.
     """
     df = applications.copy()
 
@@ -61,60 +95,22 @@ def join_enrichment(
         log.info("Joined %d property-level fields", len(rename_map))
 
     # ------------------------------------------------------------------
-    # Property-group aggregate enrichment
-    # Group is a neighborhood string. Aggregate unit-level statistics per group
-    # by joining units → properties → group, then summarizing.
+    # Per-tier reference price. Parsed from unit Names, joined on the applicant's
+    # chosen unit type. Powers budget_unit_mismatch (thesis Section 4.3). Units
+    # carry no property-group key and a single generic MER_Type, so a per-group
+    # aggregate is not recoverable from this export; the per-tier price is the
+    # usable reference.
     # ------------------------------------------------------------------
-    group_col = "dshift__MER_Property_Group__c"
-    aggregate_cols = ("group_median_unit_price", "group_median_surface", "group_n_units")
-    if not include_inventory_aggregates:
-        for c in aggregate_cols:
-            df[c] = np.nan
-        log.info("Skipped current-snapshot inventory aggregates for as-of-time safety")
-        log.info("Joined sample shape: %s", df.shape)
-        return df
-
-    if (group_col in df.columns and group_col in properties.columns
+    if ("dshift__MER_Unit_Type__c" in df.columns
+            and "Name" in units.columns
             and "dshift__MER_Current_Unit_Price__c" in units.columns):
-
-        # Map unit -> property -> group (units don't have group directly)
-        # We use the property the unit's parent_unit belongs to via property listing
-        # Simplest approach: unit lacks a direct group link. We aggregate at the
-        # property level via the units' property column if present, otherwise punt.
-
-        # Check if units have a property column
-        unit_to_prop_col = None
-        for candidate in ("dshift__Property__c", "dshift__MER_Property__c"):
-            if candidate in units.columns:
-                unit_to_prop_col = candidate
-                break
-
-        if unit_to_prop_col:
-            unit_with_group = units.merge(
-                properties[["Id", group_col]],
-                how="left", left_on=unit_to_prop_col, right_on="Id",
-                suffixes=("", "_prop"),
-            )
-            agg = (unit_with_group
-                   .groupby(group_col, dropna=True)
-                   .agg(
-                       group_median_unit_price=("dshift__MER_Current_Unit_Price__c", "median"),
-                       group_median_surface=("dshift__MER_Surface__c", "median"),
-                       group_n_units=("Id", "count"),
-                   )
-                   .reset_index())
-            df = df.merge(agg, how="left", on=group_col)
-            log.info("Joined %d group-level aggregate fields", 3)
-        else:
-            # Fallback: aggregate unit prices globally per group via property mapping
-            # by joining via property name. Since we can't link unit->group cleanly,
-            # we set these to NaN but reserve the columns so downstream code is stable.
-            log.warning(
-                "Cannot link units to property groups (no Property FK on units). "
-                "Group-level aggregates will be NaN."
-            )
-            for c in aggregate_cols:
-                df[c] = np.nan
+        ref = unit_type_reference_price(units)
+        df = df.merge(ref, how="left", on="dshift__MER_Unit_Type__c")
+        log.info("Joined unit_type_median_price for %d/%d applications",
+                 df["unit_type_median_price"].notna().sum(), len(df))
+    else:
+        df["unit_type_median_price"] = np.nan
+        log.warning("Cannot build unit_type_median_price; column set to NaN")
 
     log.info("Joined sample shape: %s", df.shape)
     return df

@@ -35,6 +35,8 @@ def test_join_enrichment_skips_current_inventory_aggregates_by_default():
     assert enriched["property_city"].iloc[0] == "Brussels"
     assert "property_age_years" not in enriched.columns
     assert "property_owned_by_neybor" not in enriched.columns
-    assert pd.isna(enriched["group_median_unit_price"].iloc[0])
-    assert pd.isna(enriched["group_median_surface"].iloc[0])
-    assert pd.isna(enriched["group_n_units"].iloc[0])
+    # The superseded per-group aggregates are gone; a per-tier reference price is
+    # produced instead (NaN here because the units fixture has no parseable Name).
+    assert "group_median_unit_price" not in enriched.columns
+    assert "unit_type_median_price" in enriched.columns
+    assert pd.isna(enriched["unit_type_median_price"].iloc[0])

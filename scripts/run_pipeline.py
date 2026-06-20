@@ -52,6 +52,7 @@ from neybor.models import (
     metrics_to_dataframe,
     select_model_and_threshold,
     temporal_split,
+    train_decision_tree,
     train_logistic_regression,
     train_random_forest,
     train_xgboost,
@@ -245,6 +246,7 @@ def main(args: argparse.Namespace) -> int:
 
     model_factories = {
         "logreg": train_logistic_regression,
+        "decision_tree": train_decision_tree,
         "random_forest": train_random_forest,
         "xgboost": train_xgboost,
     }

@@ -173,10 +173,10 @@ class TestDemandPressure:
 
 
 class TestBudgetUnitMismatch:
-    def test_with_group_median_unit_price(self):
+    def test_with_unit_type_median_price(self):
         df = pd.DataFrame({
             "monthly_budget_midpoint": [800, 1500, 1200, np.nan],
-            "group_median_unit_price": [1000, 1000, 1000, 1000],
+            "unit_type_median_price": [1000, 1000, 1000, 1000],
         })
         df = add_budget_unit_mismatch(df)
         assert df["budget_unit_mismatch"].tolist() == [1, 0, 0, 0]

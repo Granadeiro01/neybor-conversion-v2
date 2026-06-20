@@ -48,9 +48,11 @@ ALLOWED_NATIVE_FIELDS: frozenset[str] = frozenset({
 SENSITIVE_FIELDS: frozenset[str] = frozenset({
     "age_at_application_created",
     "tenant_age_at_application_created",
+    "age_band",
     "Country_of_Origin__c",
     "Gender__c",
     "Nationality__c",
+    "nationality_region",
     "Working_for__c",
 })
 
@@ -59,6 +61,14 @@ ALLOWED_ENGINEERED_FIELDS: frozenset[str] = frozenset({
     "demand_pressure",
     "submission_day_of_week",
     "submission_month",
+    # Continuous months since June 2025: explicit drift control for the
+    # pre/post-Neybor-Tech capture-regime shift (thesis Sections 4.3, 5.1.3).
+    "submission_time_index",
+    # Coarse, ethics-aware demographic groupings (thesis Sections 4.3, ethics).
+    # These replace high-cardinality raw nationality and absolute age as model
+    # inputs; the raw sensitive fields remain available for the fairness audit only.
+    "nationality_region",
+    "age_band",
     "budget_unit_mismatch",
     # Parsed numerics from picklist strings
     "monthly_budget_midpoint",      # parsed from "€750 - €850" → 800
@@ -74,10 +84,9 @@ ALLOWED_ENRICHMENT_FIELDS: frozenset[str] = frozenset({
     "property_country",
     "property_postal_code",
     "property_type",
-    # Aggregate unit-level statistics per property group (computed in join.py)
-    "group_median_unit_price",
-    "group_median_surface",
-    "group_n_units",
+    # Per-tier reference price (computed in join.py from unit Names); used to
+    # derive budget_unit_mismatch, not fed to the model directly.
+    "unit_type_median_price",
 })
 
 

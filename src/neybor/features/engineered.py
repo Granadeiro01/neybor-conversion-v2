@@ -146,9 +146,86 @@ def add_lead_time_days(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_submission_temporal(df: pd.DataFrame) -> pd.DataFrame:
-    """Day-of-week (0=Monday) and month-of-year from the creation timestamp."""
-    df["submission_day_of_week"] = df[CREATED_DATE_FIELD].dt.dayofweek
-    df["submission_month"] = df[CREATED_DATE_FIELD].dt.month
+    """Day-of-week (0=Monday), month-of-year, and a continuous time index.
+
+    ``submission_time_index`` is the number of calendar months elapsed since the
+    first application month in the data (June 2025 = 0). It gives the model an
+    explicit drift control: the data-capture process changed when Neybor Tech took
+    over operations, so the relationship between features and conversion is not
+    stationary across the observation window (thesis Sections 4.3, 5.1.3). Encoding
+    time as a feature lets the model absorb part of that structural shift instead of
+    silently confounding it with the substantive predictors.
+    """
+    created = df[CREATED_DATE_FIELD]
+    df["submission_day_of_week"] = created.dt.dayofweek
+    df["submission_month"] = created.dt.month
+    # Continuous months since June 2025 (the first month present in the export).
+    df["submission_time_index"] = (
+        (created.dt.year - 2025) * 12 + (created.dt.month - 6)
+    ).astype("float64")
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Demographic groupings (thesis Sections 4.3, 6.4 Ethical considerations)
+# ---------------------------------------------------------------------------
+# Coarse European / Non-European grouping of nationality. Using a two-level region
+# rather than ~45 individual nationalities (a) avoids one-hot sparsity on a feature
+# with many singleton levels and 62% missingness, and (b) limits the granularity at
+# which a demographic attribute can drive a prescriptive decision (thesis ethics
+# section). NaN nationality is kept as an explicit "Unknown" level rather than
+# dropped, because missingness itself is informative and 62% of rows lack it.
+EUROPEAN_NATIONALITIES: frozenset[str] = frozenset({
+    "French", "German", "Italian", "Belgian", "Spanish", "Portuguese", "Greek",
+    "Dutch", "Norwegian", "British", "Slovak", "Irish", "Polish", "Romanian",
+    "Swedish", "Icelandic", "Danish", "Cypriot", "Ukrainian", "Estonian",
+    "Hungarian", "Finnish", "Lithuanian", "Bulgarian", "Croatian", "Albanian",
+    "Russian", "Czech", "Austrian", "Swiss", "Slovenian", "Latvian", "Luxembourgish",
+    "Maltese", "Serbian", "Bosnian", "Macedonian", "Montenegrin", "Moldovan",
+})
+
+NATIONALITY_REGION_COLUMN = "nationality_region"
+AGE_BAND_COLUMN = "age_band"
+RAW_NATIONALITY_COLUMN = "Nationality__c"
+
+
+def add_demographic_groupings(df: pd.DataFrame) -> pd.DataFrame:
+    """Coarse, ethics-aware encodings of nationality and age.
+
+    Adds:
+      - ``nationality_region``: European / Non-European / Unknown
+      - ``age_band``: <=24 / 25-29 / 30-34 / 35-44 / 45+ / Unknown
+    """
+    if RAW_NATIONALITY_COLUMN in df.columns:
+        nat = df[RAW_NATIONALITY_COLUMN].astype("string").str.strip()
+        region = pd.Series("Non-European", index=df.index, dtype="object")
+        region[nat.isin(EUROPEAN_NATIONALITIES)] = "European"
+        region[nat.isna() | (nat == "")] = "Unknown"
+        df[NATIONALITY_REGION_COLUMN] = region
+    else:
+        log.warning("%s not in DataFrame; nationality_region set to Unknown",
+                    RAW_NATIONALITY_COLUMN)
+        df[NATIONALITY_REGION_COLUMN] = "Unknown"
+
+    age_source = None
+    if TENANT_AGE_AT_APPLICATION_COLUMN in df.columns:
+        age_source = TENANT_AGE_AT_APPLICATION_COLUMN
+    elif AGE_AT_APPLICATION_COLUMN in df.columns:
+        age_source = AGE_AT_APPLICATION_COLUMN
+    if age_source is not None:
+        age = pd.to_numeric(df[age_source], errors="coerce")
+        # Treat implausible ages (0 or >120) as missing before binning.
+        age = age.where(age.between(15, MAX_PLAUSIBLE_AGE_YEARS), np.nan)
+        band = pd.cut(
+            age,
+            bins=[14, 24, 29, 34, 44, MAX_PLAUSIBLE_AGE_YEARS],
+            labels=["<=24", "25-29", "30-34", "35-44", "45+"],
+        ).astype("object")
+        band = band.where(age.notna(), "Unknown")
+        df[AGE_BAND_COLUMN] = band
+    else:
+        log.warning("No age source column; age_band set to Unknown")
+        df[AGE_BAND_COLUMN] = "Unknown"
     return df
 
 
@@ -251,7 +328,7 @@ def add_demand_pressure(df: pd.DataFrame, group_col: str = PROPERTY_GROUP_FIELD)
 
 def add_budget_unit_mismatch(
     df: pd.DataFrame,
-    reference_price_col: str = "group_median_unit_price",
+    reference_price_col: str = "unit_type_median_price",
 ) -> pd.DataFrame:
     """Binary indicator: applicant budget below median price of preferred unit type.
 
@@ -279,16 +356,64 @@ def add_budget_unit_mismatch(
     return df
 
 
+# ---------------------------------------------------------------------------
+# Coliving enrichment (domain-rule data construction, thesis Section 4.3)
+# ---------------------------------------------------------------------------
+# Two operator-supplied business rules that exploit known structure of the
+# product. (R2) When type-of-living is missing and the stated monthly budget
+# falls in one of the coliving price brackets, the application is treated as a
+# Coliving House. (R1) For any Coliving House, the number of rooms is "1-bedroom"
+# by construction, because a coliving booking is a single private bedroom; the
+# field was simply left blank rather than being genuinely unknown. Both rules
+# FILL MISSING values only and never overwrite a value the applicant supplied.
+# This is data construction in the advisor's sense, not statistical imputation,
+# and is documented as such.
+COLIVING_BUDGET_BRACKETS: frozenset[str] = frozenset({"<€750", "€850 - €950", "€1050 - €1250"})
+TYPE_OF_LIVING_COLUMN = "Type_Of_Living__c"
+ROOMS_COLUMN = "How_Many_Room_Do_You_Need__c"
+COLIVING_VALUE = "Coliving House"
+
+
+def add_coliving_enrichment(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill missing Type_Of_Living and rooms from operator domain rules (fill-only)."""
+    budget_col = "Monthly_Budget" if "Monthly_Budget" in df.columns else "Monthly_Budget__c"
+
+    def _norm(s: pd.Series) -> pd.Series:
+        return s.astype("string").str.replace("\xa0", " ", regex=False).str.strip()
+
+    # R2: missing type + coliving budget bracket -> Coliving House
+    if TYPE_OF_LIVING_COLUMN in df.columns and budget_col in df.columns:
+        type_norm = _norm(df[TYPE_OF_LIVING_COLUMN])
+        type_missing = type_norm.isna() | (type_norm == "")
+        in_bracket = _norm(df[budget_col]).isin(COLIVING_BUDGET_BRACKETS)
+        n2 = int((type_missing & in_bracket).sum())
+        df.loc[type_missing & in_bracket, TYPE_OF_LIVING_COLUMN] = COLIVING_VALUE
+        log.info("Coliving enrichment R2: filled %d missing Type_Of_Living from budget bracket", n2)
+
+    # R1: Coliving House + missing rooms -> "1-bedroom" (fill-only, no overwrite)
+    if TYPE_OF_LIVING_COLUMN in df.columns and ROOMS_COLUMN in df.columns:
+        is_coliving = _norm(df[TYPE_OF_LIVING_COLUMN]) == COLIVING_VALUE
+        rooms_norm = _norm(df[ROOMS_COLUMN])
+        rooms_missing = rooms_norm.isna() | (rooms_norm == "")
+        n1 = int((is_coliving & rooms_missing).sum())
+        df.loc[is_coliving & rooms_missing, ROOMS_COLUMN] = "1-bedroom"
+        log.info("Coliving enrichment R1: filled %d missing rooms for Coliving House", n1)
+    return df
+
+
 def add_all_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
     """Apply all engineered features in the right order.
 
-    Picklist parsing happens first because budget_unit_mismatch depends on the
-    parsed numeric budget midpoint.
+    Coliving enrichment runs first so the constructed Type_Of_Living and rooms
+    values are visible to every downstream step. Picklist parsing then runs
+    before budget_unit_mismatch, which depends on the parsed numeric midpoint.
     """
+    df = add_coliving_enrichment(df)
     df = add_parsed_picklists(df)
     df = add_lead_time_days(df)
     df = add_submission_temporal(df)
     df = add_age_at_application_created(df)
+    df = add_demographic_groupings(df)
     df = add_demand_pressure(df)
     df = add_budget_unit_mismatch(df)
     return df
